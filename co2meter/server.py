@@ -59,7 +59,7 @@ def home():
         status = ''
     try:
         vals = list(mon._last_data)
-        vals[-1] = '%.1f' % vals[-1]
+        vals[-2] = '%.1f' % vals[-2]
     except:
         data = read_logs()
         vals = data.split('\n')[-2].split(',')
@@ -78,7 +78,7 @@ def home():
     co2 = '<font color="%s">%s ppm</font>' % (color, vals[1])
     # Return template
     return render_template('index.html', image=img, timestamp=vals[0],
-                           co2=vals[1], color=color, temp=vals[2], url=_URL,
+                           co2=vals[1], color=color, temp=vals[2], humidity=vals[3], url=_URL,
                            status=status)
 
 
@@ -144,7 +144,7 @@ def prepare_data(name=None, span='24H'):
     elif span == 'FULL':
         if len(data) > 3000:  # Resample only long series
             data = data.resample('1H').mean()
-    data = data.round({'co2': 0, 'temp': 1})
+    data = data.round({'co2': 0, 'temp': 1, 'humidity': 1})
     return data
 
 
@@ -172,6 +172,8 @@ def chart_co2_temp(name=None, freq='24H'):
     co2_max = min(max(2000, data['co2'].max() + 50), _CO2_MAX_VALUE)
     t_min = min(15, data['temp'].min())
     t_max = max(27, data['temp'].max())
+    h_min = min(30, data['humidity'].min()) 
+    h_max = max(60, data['humidity'].max()) 
 
     rect_green = rect(co2_min, _RANGE_MID[0], _COLORS['g'])
     rect_yellow = rect(_RANGE_MID[0], _RANGE_MID[1], _COLORS['y'])
@@ -189,6 +191,7 @@ def chart_co2_temp(name=None, freq='24H'):
     index = data.index.format()
     co2 = list(pd.np.where(data.co2.isnull(), None, data.co2))
     temp = list(pd.np.where(data.temp.isnull(), None, data.temp))
+    humidity = list(pd.np.where(data.humidity.isnull(), None, data.humidity))
 
     d_co2 = {'mode': 'lines+markers', 'type': 'scatter',
              'name': 'CO2 concentration',
@@ -198,20 +201,28 @@ def chart_co2_temp(name=None, freq='24H'):
               'name': 'Temperature',
               'xaxis': 'x1', 'yaxis': 'y2',
               'x': index, 'y': temp}
+    d_humidity = {'mode': 'lines+markers', 'type': 'scatter',
+              'name': 'Humidity',
+              'xaxis': 'x1', 'yaxis': 'y3',
+              'x': index, 'y': humidity}
+
 
     config = {'displayModeBar': False, 'staticPlot': staticPlot}
     layout = {'margin': {'l': 30, 'r': 10, 'b': 30, 't': 30},
               'showlegend': False,
               'shapes': [rect_green, rect_yellow, rect_red],
-              'xaxis1': {'domain': [0, 1], 'anchor': 'y2'},
+              'xaxis1': {'domain': [0, 1], 'anchor': 'y3'},
               'yaxis1': {'domain': [0.55, 1], 'anchor': 'free', 'position': 0,
                          'range': [co2_min, co2_max]},
-              'yaxis2': {'domain': [0, 0.45], 'anchor': 'x1',
+              'yaxis2': {'domain': [0.25, 0.5], 'anchor': 'x1',
                          'range': [t_min, t_max]},
+              'yaxis3': {'domain': [0, 0.20], 'anchor': 'x1',
+                         'range': [h_min, h_max]},
               'annotations': [caption('CO2 concentration', 0.5, 1),
-                              caption('Temperature', 0.5, 0.45)]
+                              caption('Temperature', 0.5, 0.5),
+                              caption('Humidity', 0.5, 0.20)]
               }
-    fig = {'data': [d_co2, d_temp], 'layout': layout, 'config': config}
+    fig = {'data': [d_co2, d_temp, d_humidity], 'layout': layout, 'config': config}
     return jsonify(fig)
 
 
@@ -247,10 +258,10 @@ def write_to_log(vals):
         os.makedirs('logs')
     if not os.path.isfile(fname):
         with open(fname, 'a') as f:
-            f.write('timestamp,co2,temp\n')
+            f.write('timestamp,co2,temp,humidity\n')
     # Append to file
     with open(fname, 'a') as f:
-        f.write('%s,%d,%.1f\n' % vals)
+        f.write('%s,%d,%.1f,%.1f\n' % vals)
 
 
 def read_co2_data():
@@ -284,7 +295,7 @@ def monitoring_CO2(interval):
             logging.info('[%s] monitor is not connected' % co2.now())
         else:
             # Write to log and sleep
-            logging.info('[%s] %d ppm, %.1f deg C' % tuple(vals))
+            logging.info('[%s] %d ppm, %.1f deg C, %.1f %%' % tuple(vals))
             write_to_log(vals)
         # Sleep for the next call
         time.sleep(interval)
@@ -432,7 +443,7 @@ def wrap_csv(data, fname='output'):
 def wrap_json(data):
     """ Convert CSV to JSON and make it downloadable """
     entries = [_.split(',') for _ in data.split('\n') if _ != '']
-    js = [{k: v for k, v in zip(['timestamp', 'co2', 'temp'], x)}
+    js = [{k: v for k, v in zip(['timestamp', 'co2', 'temp', 'humidity'], x)}
           for x in entries[1:]]
     return jsonify(js)
 
@@ -440,7 +451,7 @@ def wrap_json(data):
 def wrap_table(data):
     """ Return HTML for table """
     res = ('<table><thead><tr><th>Timestamp</th><th>CO2 concentration</th>'
-           '<th>Temperature</th></tr></thead><tbody>')
+           '<th>Temperature</th><th>Humidity</th></tr></thead><tbody>')
     for line in data.split('\n')[1:]:
         res += '<tr>' + ''.join(['<td>%s</td>' % d for d in line.split(',')]) + '</tr>'
     res += '</tbody></table>'
